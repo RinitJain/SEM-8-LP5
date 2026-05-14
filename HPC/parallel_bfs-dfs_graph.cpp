@@ -1,147 +1,212 @@
+// Design and implement Parallel Breadth First Search and Depth First Search based on
+// existing algorithms using OpenMP. Use a Tree or an undirected graph for BFS and DFS .
+// Measure the performance of sequential and parallel algorithms.
 #include <iostream>
 #include <vector>
 #include <queue>
-#include <stack>
-#include <algorithm>
-#include <map>
-#include <set>
-#include <string>
 #include <omp.h>
+
 using namespace std;
 
-class ParallelSorting {
+class Graph {
+    int V;
+    vector<vector<int>> adj;
+
 public:
-  vector<int> arr;
-
-  ParallelSorting(vector<int> v) { arr = v; }
-
-  void print_array() {
-    for (int i = 0; i < arr.size(); i++) {
-      cout << arr[i] << " ";
-    }
-    cout << endl;
-  }
-
-  void merge(int left, int mid, int right) {
-    int i = left, j = mid + 1;
-    vector<int> temp;
-
-    while (i <= mid && j <= right) {
-      if (arr[i] <= arr[j])
-        temp.push_back(arr[i++]);
-      else
-        temp.push_back(arr[j++]);
+    Graph(int V) {
+        this->V = V;
+        adj.resize(V);
     }
 
-    while (i <= mid)
-      temp.push_back(arr[i++]);
-    while (j <= right)
-      temp.push_back(arr[j++]);
-
-    for (int k = 0; k < temp.size(); k++) {
-      arr[left + k] = temp[k];
+    // Add edge to graph
+    void addEdge(int u, int v) {
+        adj[u].push_back(v);
+        adj[v].push_back(u); // Undirected graph
     }
-  }
 
-  void serial_bubblesort() {
-    int n = arr.size();
-    for (int i = 0; i < n - 1; i++) {
-      for (int j = 0; j < n - i - 1; j++) {
-        if (arr[j] > arr[j + 1])
-          swap(arr[j], arr[j + 1]);
-      }
-    }
-  }
+    // ---------------- SEQUENTIAL BFS ----------------
+    void sequentialBFS(int start) {
+        vector<bool> visited(V, false);
+        queue<int> q;
 
-  void serial_mergesort(int left, int right) {
-    if (left < right) {
-      int mid = left + (right - left) / 2;
+        visited[start] = true;
+        q.push(start);
 
-      serial_mergesort(left, mid);
-      serial_mergesort(mid + 1, right);
+        while (!q.empty()) {
+            int node = q.front();
+            q.pop();
 
-      merge(left, mid, right);
-    }
-  }
+            cout << node << " ";
 
-  void parallel_bubblesort() {
-    int n = arr.size();
-    bool sorted = false;
-
-    // odd-even transposition sort pattern
-    while (!sorted) {
-      bool local_sorted = true;
-
-// even-indexed passes (0,2,4,...)
-#pragma omp parallel for reduction(&& : local_sorted)
-      for (int i = 0; i < n - 1; i += 2) {
-        if (arr[i] > arr[i + 1]) {
-          swap(arr[i], arr[i + 1]);
-          local_sorted = false;
+            for (int neighbor : adj[node]) {
+                if (!visited[neighbor]) {
+                    visited[neighbor] = true;
+                    q.push(neighbor);
+                }
+            }
         }
-      }
-
-// odd-indexed passes (1,3,5,...)
-#pragma omp parallel for reduction(&& : local_sorted)
-      for (int i = 1; i < n - 1; i += 2) {
-        if (arr[i] > arr[i + 1]) {
-          swap(arr[i], arr[i + 1]);
-          local_sorted = false;
-        }
-      }
-
-      // stop when no swaps were made in both passes
-      sorted = local_sorted;
     }
-  }
 
-  void parallel_mergesort(int left, int right, int depth = 0) {
-    if (left < right) {
-      int mid = left + (right - left) / 2;
+    // ---------------- PARALLEL BFS ----------------
+    void parallelBFS(int start) {
+        vector<bool> visited(V, false);
+        queue<int> q;
 
-      // Without a depth limit, each recursive call would spawn new parallel
-      // tasks. Since merge sort is divide-and-conquer, this leads to
-      // exponential growth in threads (e.g., depth 0: 1 thread, depth 1: 2,
-      // depth 2: 4, ..., depth 10: 1024).
+        visited[start] = true;
+        q.push(start);
 
-      // At some point (deep in the recursion), the subarrays are so small that
-      // parallelizing their sort takes more time than sorting them sequentially
-      // due to thread management overhead. Hence we parallelize for depth <= 4.
-      if (depth <= 4) {
-#pragma omp parallel sections
+        while (!q.empty()) {
+
+            int current;
+
+            #pragma omp parallel shared(q, visited)
+            {
+                // Only one thread removes element from queue
+                #pragma omp single
+                {
+                    current = q.front();
+                    q.pop();
+
+                    cout << "Thread " << omp_get_thread_num() << " visited " << current << endl;
+                }
+
+                // Parallel traversal of neighbors
+                #pragma omp for
+                for (int i = 0; i < adj[current].size(); i++) {
+
+                    int neighbor = adj[current][i];
+
+                    if (!visited[neighbor]) {
+
+                        #pragma omp critical
+                        {
+                            if (!visited[neighbor]) {
+                                visited[neighbor] = true;
+                                q.push(neighbor);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ---------------- SEQUENTIAL DFS ----------------
+    void sequentialDFSUtil(int node, vector<bool> &visited) {
+
+        visited[node] = true;
+        cout << node << " ";
+
+        for (int neighbor : adj[node]) {
+            if (!visited[neighbor]) {
+                sequentialDFSUtil(neighbor, visited);
+            }
+        }
+    }
+
+    void sequentialDFS(int start) {
+        vector<bool> visited(V, false);
+        sequentialDFSUtil(start, visited);
+    }
+
+    // ---------------- PARALLEL DFS ----------------
+    void parallelDFSUtil(int node, vector<bool> &visited) {
+
+        #pragma omp critical
         {
-#pragma omp section
-          parallel_mergesort(left, mid, depth + 1);
-
-#pragma omp section
-          parallel_mergesort(mid + 1, right, depth + 1);
+            visited[node] = true;
+            cout << node << " ";
         }
-      } else {
-        parallel_mergesort(left, mid, depth + 1);
-        parallel_mergesort(mid + 1, right, depth + 1);
-      }
 
-      merge(left, mid, right);
+        #pragma omp parallel for
+        for (int i = 0; i < adj[node].size(); i++) {
+
+            int neighbor = adj[node][i];
+
+            if (!visited[neighbor]) {
+                parallelDFSUtil(neighbor, visited);
+            }
+        }
     }
-  }
+
+    void parallelDFS(int start) {
+        vector<bool> visited(V, false);
+        parallelDFSUtil(start, visited);
+    }
 };
 
 int main() {
-  vector<int> arr = {5, 3, 10, 20, 0, -1};
-  ParallelSorting ps1(arr);
 
-  cout << "Original array....." << endl;
-  ps1.print_array();
+    int V, E;
 
-  cout << "Bubble Sort..." << endl;
-  ps1.parallel_bubblesort();
-  ps1.print_array();
+    cout << "Enter number of vertices: ";
+    cin >> V;
 
-  arr = {5, 3, 10, 20, 0, -1};
-  ParallelSorting ps2(arr);
-  cout << "Merge Sort...." << endl;
-  ps2.parallel_mergesort(0, arr.size() - 1, 0);
-  ps2.print_array();
+    cout << "Enter number of edges: ";
+    cin >> E;
 
-  return 0;
+    Graph g(V);
+
+    cout << "Enter edges (u v):" << endl;
+
+    for (int i = 0; i < E; i++) {
+
+        int u, v;
+        cin >> u >> v;
+
+        g.addEdge(u, v);
+    }
+
+    int startNode;
+
+    cout << "Enter starting vertex: ";
+    cin >> startNode;
+
+    double start, end;
+
+    // ---------------- SEQUENTIAL BFS ----------------
+    cout << "\nSequential BFS: ";
+    start = omp_get_wtime();
+    g.sequentialBFS(startNode);
+    end = omp_get_wtime();
+    cout << "\nExecution Time: " << (end - start) * 1000 << " ms" << endl;
+
+    // ---------------- PARALLEL BFS ----------------
+    cout << "\nParallel BFS:" << endl;
+    start = omp_get_wtime();
+    g.parallelBFS(startNode);
+    end = omp_get_wtime();
+    cout << "Execution Time: " << (end - start) * 1000 << " ms" << endl;
+
+    // ---------------- SEQUENTIAL DFS ----------------
+    cout << "\nSequential DFS: ";
+    start = omp_get_wtime();
+    g.sequentialDFS(startNode);
+    end = omp_get_wtime();
+    cout << "\nExecution Time: " << (end - start) * 1000 << " ms" << endl;
+
+    // ---------------- PARALLEL DFS ----------------
+    cout << "\nParallel DFS: ";
+    start = omp_get_wtime();
+    g.parallelDFS(startNode);
+    end = omp_get_wtime();
+    cout << "\nExecution Time: " << (end - start) * 1000 << " ms" << endl;
+
+    return 0;
 }
+
+/*
+
+COMPILATION:
+
+Linux:
+g++ -fopenmp hpc1.cpp -o hpc1
+export OMP_NUM_THREADS=4
+./hpc1
+
+Windows:
+g++ -fopenmp hpc1.cpp -o hpc1.exe
+$env:OMP_NUM_THREADS=4
+.\hpc1.exe
+
+*/
